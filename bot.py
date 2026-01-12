@@ -1,21 +1,31 @@
 import os
 import requests
 from datetime import datetime
-
-print("### FINAL VERSION OF BOT.PY ###")
+import xml.etree.ElementTree as ET
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 WEATHER_KEY = os.getenv("WEATHER_KEY")
-NEWS_KEY = os.getenv("NEWS_KEY")
+
+# ---------- Weather emoji ----------
+def weather_emoji(desc):
+    d = desc.lower()
+    if "снег" in d:
+        return "❄️"
+    if "дожд" in d:
+        return "🌧"
+    if "ясно" in d:
+        return "☀️"
+    if "облач" in d:
+        return "☁️"
+    if "туман" in d:
+        return "🌫"
+    return "🌡"
 
 
-# ---------- Погода ----------
+# ---------- Weather (Moscow строго) ----------
 def get_weather():
     try:
-        if not WEATHER_KEY:
-            return "Погода недоступна ☁️"
-
         r = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
             params={
@@ -25,25 +35,20 @@ def get_weather():
                 "lang": "ru"
             },
             timeout=10
-        )
+        ).json()
 
-        if r.status_code != 200:
-            return "Погода недоступна ☁️"
+        desc = r["weather"][0]["description"].capitalize()
+        emoji = weather_emoji(desc)
+        temp = round(r["main"]["temp"])
+        feels = round(r["main"]["feels_like"])
 
-        data = r.json()
-        if "main" not in data:
-            return "Погода недоступна ☁️"
+        return f"{emoji} Москва: {temp}°C, {desc}\nОщущается как {feels}°C"
 
-        temp = round(data["main"]["temp"])
-        feels = round(data["main"]["feels_like"])
-        desc = data["weather"][0]["description"].capitalize()
-
-        return f"{temp}°C, {desc}\nОщущается как {feels}°C"
     except Exception:
-        return "Погода недоступна ☁️"
+        return "🌡 Москва: погода недоступна"
 
 
-# ---------- Курсы ----------
+# ---------- Rates ----------
 def get_rates():
     try:
         cbr = requests.get(
@@ -54,13 +59,11 @@ def get_rates():
         usd = round(cbr["Valute"]["USD"]["Value"], 2)
         eur = round(cbr["Valute"]["EUR"]["Value"], 2)
 
-        btc_resp = requests.get(
+        btc = requests.get(
             "https://api.coingecko.com/api/v3/simple/price",
             params={"ids": "bitcoin", "vs_currencies": "rub"},
             timeout=10
-        ).json()
-
-        btc = btc_resp["bitcoin"]["rub"]
+        ).json()["bitcoin"]["rub"]
 
         return (
             f"USD — {usd} ₽\n"
@@ -71,59 +74,60 @@ def get_rates():
         return "Курсы недоступны 💱"
 
 
-# ---------- Гороскоп  ----------
+# ---------- Horoscope (Mail.ru RSS) ----------
 def get_horoscope():
     try:
         r = requests.get(
-            "https://ignio.com/rss/daily/com.xml",
+            "https://horoscopes.mail.ru/rss/overview/",
             timeout=10
         )
-
-        if r.status_code != 200:
-            return "Сегодня хороший день для спокойных решений ✨"
-
-        text = r.text
-
-        start = text.find("<description>") + len("<description>")
-        end = text.find("</description>")
-
-        horoscope = text[start:end]
-        horoscope = horoscope.replace("<![CDATA[", "").replace("]]>", "").strip()
-
-        return horoscope[:500]
-
+        root = ET.fromstring(r.text)
+        text = root.find(".//item/description").text
+        return text.strip()[:500]
     except Exception:
         return "Сегодня стоит доверять интуиции ✨"
 
 
-# ---------- Новости ----------
-import xml.etree.ElementTree as ET
-
+# ---------- News: 3 news + links ----------
 def get_news():
     try:
         r = requests.get(
             "https://news.yandex.ru/index.rss",
             timeout=10
         )
-
         root = ET.fromstring(r.text)
         items = root.findall(".//item")[:3]
 
-        news = []
+        news_lines = []
         for i, item in enumerate(items, 1):
             title = item.find("title").text
-            news.append(f"{i}. {title}")
+            link = item.find("link").text
+            news_lines.append(f"{i}. {title}\n{link}")
 
-        return "\n".join(news)
+        return "\n\n".join(news_lines)
 
     except Exception:
-        return "Новости временно недоступны 🗞"
+        return "Новости недоступны 🗞"
+
 
 # ---------- Telegram ----------
 def send_message(text):
+    keyboard = {
+        "inline_keyboard": [[
+            {
+                "text": "🔄 Обновить сейчас",
+                "url": f"https://t.me/{BOT_TOKEN.split(':')[0]}"
+            }
+        ]]
+    }
+
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": text},
+        json={
+            "chat_id": CHAT_ID,
+            "text": text,
+            "reply_markup": keyboard
+        },
         timeout=10
     )
 
@@ -134,10 +138,11 @@ def main():
 
     message = (
         f"☀️ Доброе утро! ({today})\n\n"
-        f"🌤 Москва:\n{get_weather()}\n\n"
+        f"{get_weather()}\n\n"
         f"💱 Курсы:\n{get_rates()}\n\n"
         f"♈ Гороскоп:\n{get_horoscope()}\n\n"
-        f"🗞 Новости:\n{get_news()}"
+        f"🗞 Новости дня:\n{get_news()}\n\n"
+        f"— Утренний бот ☕"
     )
 
     send_message(message)
