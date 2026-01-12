@@ -16,7 +16,12 @@ def get_weather():
         "units": "metric",
         "lang": "ru"
     }
+
     r = requests.get(url, params=params, timeout=10).json()
+
+    # 🔒 защита от ошибок API
+    if "main" not in r:
+        return "Не удалось получить погоду ☁️"
 
     temp = round(r["main"]["temp"])
     feels = round(r["main"]["feels_like"])
