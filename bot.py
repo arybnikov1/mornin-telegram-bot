@@ -9,25 +9,36 @@ NEWS_KEY = os.getenv("NEWS_KEY")
 
 # ---------- Погода ----------
 def get_weather():
-    url = "https://api.openweathermap.org/data/2.5/weather"
-    params = {
-        "q": "Moscow,ru",
-        "appid": WEATHER_KEY,
-        "units": "metric",
-        "lang": "ru"
-    }
+    try:
+        if not WEATHER_KEY:
+            return "Погода: API-ключ не задан ☁️"
 
-    r = requests.get(url, params=params, timeout=10).json()
+        url = "https://api.openweathermap.org/data/2.5/weather"
+        params = {
+            "q": "Moscow,ru",
+            "appid": WEATHER_KEY,
+            "units": "metric",
+            "lang": "ru"
+        }
 
-    # 🔒 защита от ошибок API
-    if "main" not in r:
-        return "Не удалось получить погоду ☁️"
+        response = requests.get(url, params=params, timeout=10)
 
-    temp = round(r["main"]["temp"])
-    feels = round(r["main"]["feels_like"])
-    desc = r["weather"][0]["description"].capitalize()
+        if response.status_code != 200:
+            return f"Погода недоступна ☁️ (код {response.status_code})"
 
-    return f"{temp}°C, {desc}\nОщущается как {feels}°C"
+        r = response.json()
+
+        if "main" not in r:
+            return "Погода временно недоступна ☁️"
+
+        temp = round(r["main"]["temp"])
+        feels = round(r["main"]["feels_like"])
+        desc = r["weather"][0]["description"].capitalize()
+
+        return f"{temp}°C, {desc}\nОщущается как {feels}°C"
+
+    except Exception as e:
+        return "Погода временно недоступна ☁️"
 
 # ---------- Валюты ----------
 def get_rates():
