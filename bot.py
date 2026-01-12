@@ -1,3 +1,4 @@
+print("### NEW VERSION OF BOT.PY ###")
 import os
 import requests
 from datetime import datetime
