@@ -1,0 +1,22 @@
+name: Daily Telegram Report
+
+on:
+  schedule:
+    - cron: '0 4 * * *'  # 07:00 МСК (UTC+3)
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - run: python bot.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          WEATHER_KEY: ${{ secrets.WEATHER_KEY }}
+          NEWS_KEY: ${{ secrets.NEWS_KEY }}
