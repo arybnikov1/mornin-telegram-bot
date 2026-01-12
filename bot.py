@@ -3,8 +3,8 @@ import sys
 import requests
 import logging
 from datetime import datetime
-from typing import Optional
 from time import sleep
+from typing import Callable
 import xml.etree.ElementTree as ET
 
 # ---------- Настройки ----------
@@ -22,15 +22,15 @@ MAX_NEWS_COUNT = 5
 # ---------- Логирование ----------
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler('morning_bot.log'),
+        logging.FileHandler("morning_bot.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# ---------- Проверка переменных окружения ----------
+# ---------- Проверка ENV ----------
 def check_env():
     missing = []
     if not BOT_TOKEN:
@@ -39,22 +39,21 @@ def check_env():
         missing.append("CHAT_ID")
     if not WEATHER_KEY:
         missing.append("WEATHER_KEY")
-    
+
     if missing:
         logger.error(f"Отсутствуют обязательные переменные окружения: {', '.join(missing)}")
         sys.exit(1)
 
-# ---------- Retry wrapper ----------
-def retry_request(func, *args, **kwargs):
-    """Выполняет функцию с повторными попытками при ошибке"""
+# ---------- Retry ----------
+def retry_request(func: Callable):
     for attempt in range(MAX_RETRIES):
         try:
-            return func(*args, **kwargs)
+            return func()
         except Exception as e:
             if attempt == MAX_RETRIES - 1:
-                logger.error(f"Все попытки исчерпаны для {func.__name__}: {e}")
+                logger.error(f"Все попытки исчерпаны: {e}")
                 raise
-            logger.warning(f"Попытка {attempt + 1} не удалась для {func.__name__}: {e}")
+            logger.warning(f"Ошибка, повтор {attempt + 1}: {e}")
             sleep(RETRY_DELAY)
 
 # ---------- Weather emoji ----------
@@ -68,7 +67,7 @@ def weather_emoji(desc: str) -> str:
         return "☀️"
     if "облач" in d or "cloud" in d:
         return "☁️"
-    if "туман" in d or "fog" in d or "mist" in d:
+    if "туман" in d or "fog" in d:
         return "🌫"
     if "гроз" in d or "thunder" in d:
         return "⛈"
@@ -78,8 +77,8 @@ def weather_emoji(desc: str) -> str:
 def get_weather() -> str:
     try:
         logger.info("Получение погоды...")
-        
-        def fetch_weather():
+
+        def fetch():
             return requests.get(
                 "https://api.openweathermap.org/data/2.5/weather",
                 params={
@@ -90,180 +89,128 @@ def get_weather() -> str:
                 },
                 timeout=REQUEST_TIMEOUT
             ).json()
-        
-        r = retry_request(fetch_weather)
+
+        r = retry_request(fetch)
 
         desc = r["weather"][0]["description"].capitalize()
         emoji = weather_emoji(desc)
         temp = round(r["main"]["temp"])
         feels = round(r["main"]["feels_like"])
-        city_name = r["name"]
+        city = r["name"]
 
-        logger.info(f"Погода получена: {temp}°C")
-        return f"{emoji} {city_name}: {temp}°C, {desc}\nОщущается как {feels}°C"
-    
+        return f"{emoji} {city}: {temp}°C, {desc}\nОщущается как {feels}°C"
+
     except Exception as e:
-        logger.error(f"Ошибка получения погоды: {e}")
+        logger.error(f"Ошибка погоды: {e}")
         return f"🌡 {CITY.split(',')[0]}: погода недоступна"
 
 # ---------- Rates ----------
 def format_number(num: float, decimals: int = 2) -> str:
-    """Форматирует число с пробелами между тысячами"""
-    formatted = f"{num:,.{decimals}f}".replace(",", " ")
-    return formatted
+    return f"{num:,.{decimals}f}".replace(",", " ")
 
 def get_rates() -> str:
     try:
-        logger.info("Получение курсов валют...")
-        
-        # Курсы рубля
+        logger.info("Получение курсов...")
+
         def fetch_cbr():
             return requests.get(
                 "https://www.cbr-xml-daily.ru/daily_json.js",
                 timeout=REQUEST_TIMEOUT
             ).json()
-        
-        cbr = retry_request(fetch_cbr)
-        usd_rub = cbr["Valute"]["USD"]["Value"]
-        eur_rub = cbr["Valute"]["EUR"]["Value"]
 
-        # Bitcoin
+        cbr = retry_request(fetch_cbr)
+        usd = cbr["Valute"]["USD"]["Value"]
+        eur = cbr["Valute"]["EUR"]["Value"]
+
         def fetch_btc():
             return requests.get(
                 "https://api.coingecko.com/api/v3/simple/price",
                 params={"ids": "bitcoin", "vs_currencies": "usd"},
                 timeout=REQUEST_TIMEOUT
             ).json()
-        
-        btc_data = retry_request(fetch_btc)
-        btc_usd = btc_data["bitcoin"]["usd"]
 
-        logger.info(f"Курсы получены: USD={usd_rub:.2f}")
-        
+        btc = retry_request(fetch_btc)["bitcoin"]["usd"]
+
         return (
-            f"USD — {format_number(usd_rub)} ₽\n"
-            f"EUR — {format_number(eur_rub)} ₽\n"
-            f"BTC — {format_number(btc_usd, 0)} $"
+            f"USD — {format_number(usd)} ₽\n"
+            f"EUR — {format_number(eur)} ₽\n"
+            f"BTC — {format_number(btc, 0)} $"
         )
-    
+
     except Exception as e:
-        logger.error(f"Ошибка получения курсов: {e}")
+        logger.error(f"Ошибка курсов: {e}")
         return "Курсы недоступны 💱"
 
-# ---------- Horoscope ----------
+# ---------- Horoscope (Aztro API) ----------
 def get_horoscope() -> str:
-    """Получает реальный гороскоп с horo.mail.ru на русском языке"""
-    # Соответствие знаков зодиака URL на horo.mail.ru
-    zodiac_mapping = {
-        "Овен": "aries",
-        "Телец": "taurus",
-        "Близнецы": "gemini",
-        "Рак": "cancer",
-        "Лев": "leo",
-        "Дева": "virgo",
-        "Весы": "libra",
-        "Скорпион": "scorpio",
-        "Стрелец": "sagittarius",
-        "Козерог": "capricorn",
-        "Водолей": "aquarius",
-        "Рыбы": "pisces"
-    }
-    
-    sign_url = zodiac_mapping.get(ZODIAC_SIGN, "capricorn").lower()
-    
     try:
         logger.info(f"Получение гороскопа для {ZODIAC_SIGN}...")
-        
-        def fetch_horoscope():
-            response = requests.get(
-                f"https://horo.mail.ru/prediction/{sign_url}/today/",
-                timeout=REQUEST_TIMEOUT,
-                headers={'User-Agent': 'Mozilla/5.0'}
+
+        zodiac_map = {
+            "Овен": "aries",
+            "Телец": "taurus",
+            "Близнецы": "gemini",
+            "Рак": "cancer",
+            "Лев": "leo",
+            "Дева": "virgo",
+            "Весы": "libra",
+            "Скорпион": "scorpio",
+            "Стрелец": "sagittarius",
+            "Козерог": "capricorn",
+            "Водолей": "aquarius",
+            "Рыбы": "pisces"
+        }
+
+        sign = zodiac_map.get(ZODIAC_SIGN, "capricorn")
+
+        def fetch():
+            r = requests.post(
+                f"https://aztro.sameerkumar.website/?sign={sign}&day=today",
+                timeout=REQUEST_TIMEOUT
             )
-            response.raise_for_status()
-            return response.text
-        
-        html = retry_request(fetch_horoscope)
-        
-        # Парсим HTML для извлечения текста гороскопа
-        import re
-        from html import unescape
-        
-        # Ищем конкретный блок с текстом гороскопа
-        # Обычно гороскоп находится в div с классом article__text или похожим
-        patterns = [
-            r'<div[^>]*article__text[^>]*>(.*?)</div>',
-            r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>',
-            r'<p[^>]*class="[^"]*article[^"]*"[^>]*>(.*?)</p>',
-        ]
-        
-        horoscope_text = None
-        for pattern in patterns:
-            matches = re.findall(pattern, html, re.DOTALL | re.IGNORECASE)
-            for match in matches:
-                # Убираем все HTML теги
-                clean_text = re.sub(r'<[^>]+>', '', match)
-                # Убираем HTML entities
-                clean_text = unescape(clean_text)
-                # Убираем лишние пробелы и переносы
-                clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-                # Проверяем, что это осмысленный текст (больше 100 символов, не содержит служебных слов)
-                bad_words = ['window.', 'copyright', '©', 'mail.ru', 'vk.com', 'function', 'var ', 'const ']
-                if len(clean_text) > 100 and not any(word in clean_text.lower() for word in bad_words):
-                    horoscope_text = clean_text
-                    break
-            if horoscope_text:
-                break
-        
-        if horoscope_text:
-            # Ограничиваем длину до разумной (первые 500 символов)
-            if len(horoscope_text) > 500:
-                horoscope_text = horoscope_text[:500] + "..."
-            logger.info(f"Гороскоп получен для {ZODIAC_SIGN}")
-            return horoscope_text
-        else:
-            logger.error("Не удалось извлечь текст гороскопа")
-            return "Гороскоп временно недоступен ⭐"
-    
+            r.raise_for_status()
+            return r.json()
+
+        data = retry_request(fetch)
+        text = data.get("description")
+
+        if not text:
+            raise ValueError("Пустой ответ API")
+
+        return text
+
     except Exception as e:
-        logger.error(f"Ошибка получения гороскопа: {e}")
-        return "Гороскоп временно недоступен ⭐"
+        logger.error(f"Ошибка гороскопа: {e}")
+        return "Сегодня день для спокойных и взвешенных решений ⭐"
 
 # ---------- Helpers ----------
 def is_sport(title: str) -> bool:
-    sport_words = [
-        "спорт", "матч", "сыгра", "игра", "против",
-        "чемпионат", "кубок", "лига", "кхл", "нхл",
-        "рпл", "футбол", "хоккей", "баскетбол",
-        "теннис", "гол", "счёт", "счет", "победа",
-        "поражение", "ничья"
+    words = [
+        "спорт", "матч", "игра", "чемпионат", "кубок",
+        "футбол", "хоккей", "баскетбол", "теннис",
+        "победа", "поражение", "счёт", "счет"
     ]
     t = title.lower()
-    return any(w in t for w in sport_words)
+    return any(w in t for w in words)
 
 def escape_markdown(text: str) -> str:
-    """Экранирует специальные символы для Markdown (не MarkdownV2)"""
-    # Для обычного Markdown нужно экранировать только эти символы
-    special_chars = ['_', '*', '[', '`']
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
+    for ch in ["_", "*", "[", "`"]:
+        text = text.replace(ch, f"\\{ch}")
     return text
 
 # ---------- News ----------
 def get_news() -> str:
     try:
         logger.info("Получение новостей...")
-        
-        def fetch_news():
+
+        def fetch():
             return requests.get(
                 "https://rssexport.rbc.ru/rbcnews/news/30/full.rss",
                 timeout=REQUEST_TIMEOUT
             )
-        
-        rbc = retry_request(fetch_news)
-        
-        # Безопасный парсинг XML
-        root = ET.fromstring(rbc.content)
+
+        r = retry_request(fetch)
+        root = ET.fromstring(r.content)
         items = root.findall(".//item")
 
         news = []
@@ -271,39 +218,29 @@ def get_news() -> str:
             if len(news) >= MAX_NEWS_COUNT:
                 break
 
-            title_elem = item.find("title")
-            link_elem = item.find("link")
-            
-            if title_elem is None or link_elem is None:
-                continue
-                
-            title = title_elem.text.strip() if title_elem.text else ""
-            link = link_elem.text.strip() if link_elem.text else ""
-            
+            title = item.findtext("title", "").strip()
+            link = item.findtext("link", "").strip()
+
             if not title or not link or is_sport(title):
                 continue
 
-            # Форматируем: жирный заголовок + ссылка на новой строке
-            safe_title = escape_markdown(title)
-            news.append(f"*{safe_title}*\n{link}")
+            news.append(f"*{escape_markdown(title)}*\n{link}")
 
         if not news:
             return "🗞 Новостей пока нет"
 
-        logger.info(f"Получено {len(news)} новостей")
         return "🗞 *Новости (РБК):*\n\n" + "\n\n".join(news)
 
     except Exception as e:
-        logger.error(f"Ошибка получения новостей: {e}")
+        logger.error(f"Ошибка новостей: {e}")
         return "🗞 Новости временно недоступны"
 
 # ---------- Telegram ----------
 def send_message(text: str) -> bool:
-    """Отправляет сообщение в Telegram. Возвращает True при успехе."""
     try:
-        logger.info("Отправка сообщения в Telegram...")
-        
-        response = requests.post(
+        logger.info("Отправка сообщения...")
+
+        r = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             json={
                 "chat_id": CHAT_ID,
@@ -313,54 +250,32 @@ def send_message(text: str) -> bool:
             },
             timeout=REQUEST_TIMEOUT
         )
-        
-        response.raise_for_status()
-        result = response.json()
-        
-        if result.get("ok"):
-            logger.info("Сообщение успешно отправлено")
-            return True
-        else:
-            logger.error(f"Telegram API вернул ошибку: {result}")
-            return False
-            
+        r.raise_for_status()
+        return r.json().get("ok", False)
+
     except Exception as e:
-        logger.error(f"Ошибка отправки сообщения: {e}")
-        # Логируем текст сообщения для отладки
-        logger.error(f"Текст сообщения (первые 500 символов): {text[:500]}")
+        logger.error(f"Ошибка Telegram: {e}")
         return False
 
 # ---------- Main ----------
 def main():
     logger.info("=== Запуск утреннего бота ===")
-    
-    # Проверяем переменные окружения
     check_env()
-    
+
     today = datetime.now().strftime("%d.%m.%Y")
-    
-    # Собираем части сообщения
-    weather = get_weather()
-    rates = get_rates()
-    horoscope = get_horoscope()
-    news = get_news()
-    
-    # Формируем итоговое сообщение (обычный Markdown без лишнего экранирования)
+
     message = (
         f"☀️ *Доброе утро!* ({today})\n\n"
-        f"{weather}\n\n"
-        f"💱 *Курсы:*\n{rates}\n\n"
-        f"♑ *Гороскоп для {ZODIAC_SIGN}:*\n{horoscope}\n\n"
-        f"{news}\n"
+        f"{get_weather()}\n\n"
+        f"💱 *Курсы:*\n{get_rates()}\n\n"
+        f"♑ *Гороскоп для {ZODIAC_SIGN}:*\n{get_horoscope()}\n\n"
+        f"{get_news()}\n"
     )
 
-    # Отправляем сообщение
-    success = send_message(message)
-    
-    if success:
+    if send_message(message):
         logger.info("=== Бот успешно завершил работу ===")
     else:
-        logger.error("=== Бот завершился с ошибками ===")
+        logger.error("=== Ошибка отправки сообщения ===")
         sys.exit(1)
 
 if __name__ == "__main__":
