@@ -71,7 +71,7 @@ def get_rates():
         return "Курсы недоступны 💱"
 
 
-# ---------- Гороскоп (стабильный вариант) ----------
+# ---------- Гороскоп  ----------
 def get_horoscope():
     try:
         r = requests.get(
@@ -80,44 +80,44 @@ def get_horoscope():
         )
 
         if r.status_code != 200:
-            return "Сегодня полагайся на интуицию ✨"
+            return "Сегодня хороший день для спокойных решений ✨"
 
         text = r.text
-        start = text.find("<description>") + 13
+
+        start = text.find("<description>") + len("<description>")
         end = text.find("</description>")
 
         horoscope = text[start:end]
         horoscope = horoscope.replace("<![CDATA[", "").replace("]]>", "").strip()
 
-        return horoscope[:400] + "…"
+        return horoscope[:500]
+
     except Exception:
-        return "Сегодня хороший день для спокойных решений ✨"
+        return "Сегодня стоит доверять интуиции ✨"
 
 
 # ---------- Новости ----------
+import xml.etree.ElementTree as ET
+
 def get_news():
     try:
         r = requests.get(
-            "https://gnews.io/api/v4/top-headlines",
-            params={
-                "lang": "ru",
-                "country": "ru",
-                "max": 3,
-                "token": NEWS_KEY
-            },
+            "https://news.yandex.ru/index.rss",
             timeout=10
-        ).json()
-
-        articles = r.get("articles", [])
-        if not articles:
-            return "Сегодня без громких новостей"
-
-        return "\n".join(
-            f"{i+1}. {a['title']}" for i, a in enumerate(articles)
         )
-    except Exception:
-        return "Новости недоступны 🗞"
 
+        root = ET.fromstring(r.text)
+        items = root.findall(".//item")[:3]
+
+        news = []
+        for i, item in enumerate(items, 1):
+            title = item.find("title").text
+            news.append(f"{i}. {title}")
+
+        return "\n".join(news)
+
+    except Exception:
+        return "Новости временно недоступны 🗞"
 
 # ---------- Telegram ----------
 def send_message(text):
