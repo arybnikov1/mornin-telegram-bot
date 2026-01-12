@@ -1,14 +1,17 @@
 import os
 import requests
+import re
 from datetime import datetime
 import xml.etree.ElementTree as ET
+
+print("### FINAL BOT.PY ###")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 WEATHER_KEY = os.getenv("WEATHER_KEY")
 
 # ---------- Weather emoji ----------
-def weather_emoji(desc):
+def weather_emoji(desc: str) -> str:
     d = desc.lower()
     if "снег" in d:
         return "❄️"
@@ -23,7 +26,7 @@ def weather_emoji(desc):
     return "🌡"
 
 
-# ---------- Weather (Moscow строго) ----------
+# ---------- Weather (Moscow) ----------
 def get_weather():
     try:
         r = requests.get(
@@ -35,12 +38,17 @@ def get_weather():
                 "lang": "ru"
             },
             timeout=10
-        ).json()
+        )
 
-        desc = r["weather"][0]["description"].capitalize()
+        if r.status_code != 200:
+            return "🌡 Москва: погода недоступна"
+
+        data = r.json()
+        desc = data["weather"][0]["description"].capitalize()
         emoji = weather_emoji(desc)
-        temp = round(r["main"]["temp"])
-        feels = round(r["main"]["feels_like"])
+
+        temp = round(data["main"]["temp"])
+        feels = round(data["main"]["feels_like"])
 
         return f"{emoji} Москва: {temp}°C, {desc}\nОщущается как {feels}°C"
 
@@ -70,6 +78,7 @@ def get_rates():
             f"EUR — {eur} ₽\n"
             f"BTC — {btc:,} ₽".replace(",", " ")
         )
+
     except Exception:
         return "Курсы недоступны 💱"
 
@@ -88,45 +97,113 @@ def get_horoscope():
         return "Сегодня стоит доверять интуиции ✨"
 
 
-# ---------- News: 3 news + links ----------
+# ---------- Helpers for news ----------
+def normalize_title(title: str) -> set:
+    title = title.lower()
+    title = re.sub(r"[^\w\s]", "", title)
+    return set(title.split())
+
+
+def is_similar(a: str, b: str) -> bool:
+    wa = normalize_title(a)
+    wb = normalize_title(b)
+    if not wa or not wb:
+        return False
+    intersection = wa & wb
+    similarity = len(intersection) / min(len(wa), len(wb))
+    return similarity > 0.5
+
+
+# ---------- News (RIA + Yandex + RBC, no duplicates) ----------
 def get_news():
     try:
-        r = requests.get(
+        news_blocks = []
+        used_titles = []
+
+        # --- Main news: RIA ---
+        ria = requests.get(
+            "https://ria.ru/export/rss2/archive/index.xml",
+            timeout=10
+        )
+        ria_root = ET.fromstring(ria.text)
+        ria_item = ria_root.find(".//item")
+
+        ria_title = ria_item.find("title").text
+        ria_link = ria_item.find("link").text
+        used_titles.append(ria_title)
+
+        news_blocks.append(
+            f"🟢 **Главная новость дня:**\n**{ria_title}**\n{ria_link}"
+        )
+
+        # --- Yandex: 2–3 ---
+        yandex = requests.get(
             "https://news.yandex.ru/index.rss",
             timeout=10
         )
-        root = ET.fromstring(r.text)
-        items = root.findall(".//item")[:3]
+        y_root = ET.fromstring(yandex.text)
+        y_items = y_root.findall(".//item")
 
-        news_lines = []
-        for i, item in enumerate(items, 1):
+        yandex_news = []
+        for item in y_items:
+            if len(yandex_news) >= 3:
+                break
+
             title = item.find("title").text
             link = item.find("link").text
-            news_lines.append(f"{i}. {title}\n{link}")
 
-        return "\n\n".join(news_lines)
+            if any(is_similar(title, t) for t in used_titles):
+                continue
+
+            used_titles.append(title)
+            yandex_news.append(f"{len(yandex_news)+1}. {title}\n{link}")
+
+        if yandex_news:
+            news_blocks.append(
+                "🗞 **Ещё новости:**\n" + "\n\n".join(yandex_news)
+            )
+
+        # --- RBC: business ---
+        rbc = requests.get(
+            "https://rssexport.rbc.ru/rbcnews/news/30/full.rss",
+            timeout=10
+        )
+        r_root = ET.fromstring(rbc.text)
+        r_items = r_root.findall(".//item")
+
+        rbc_news = []
+        for item in r_items:
+            if len(rbc_news) >= 3:
+                break
+
+            title = item.find("title").text
+            link = item.find("link").text
+
+            if any(is_similar(title, t) for t in used_titles):
+                continue
+
+            used_titles.append(title)
+            rbc_news.append(f"{len(rbc_news)+1}. {title}\n{link}")
+
+        if rbc_news:
+            news_blocks.append(
+                "💼 **РБК — бизнес и экономика:**\n" + "\n\n".join(rbc_news)
+            )
+
+        return "\n\n".join(news_blocks)
 
     except Exception:
-        return "Новости недоступны 🗞"
+        return "🗞 Новости временно недоступны"
 
 
 # ---------- Telegram ----------
 def send_message(text):
-    keyboard = {
-        "inline_keyboard": [[
-            {
-                "text": "🔄 Обновить сейчас",
-                "url": f"https://t.me/{BOT_TOKEN.split(':')[0]}"
-            }
-        ]]
-    }
-
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         json={
             "chat_id": CHAT_ID,
             "text": text,
-            "reply_markup": keyboard
+            "parse_mode": "Markdown"
         },
         timeout=10
     )
@@ -141,7 +218,7 @@ def main():
         f"{get_weather()}\n\n"
         f"💱 Курсы:\n{get_rates()}\n\n"
         f"♈ Гороскоп:\n{get_horoscope()}\n\n"
-        f"🗞 Новости дня:\n{get_news()}\n\n"
+        f"{get_news()}\n\n"
         f"— Утренний бот ☕"
     )
 
