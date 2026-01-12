@@ -186,42 +186,39 @@ def get_horoscope() -> str:
         html = retry_request(fetch_horoscope)
         
         # Парсим HTML для извлечения текста гороскопа
-        # Ищем блок с основным текстом
         import re
+        from html import unescape
         
-        # Ищем текст гороскопа в разных возможных блоках
+        # Ищем конкретный блок с текстом гороскопа
+        # Обычно гороскоп находится в div с классом article__text или похожим
         patterns = [
-            r'<div class="article__text[^>]*>(.*?)</div>',
-            r'<div class="articleplaintext[^>]*>(.*?)</div>',
-            r'<p class="Text[^>]*>(.*?)</p>',
+            r'<div[^>]*article__text[^>]*>(.*?)</div>',
+            r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>',
+            r'<p[^>]*class="[^"]*article[^"]*"[^>]*>(.*?)</p>',
         ]
         
         horoscope_text = None
         for pattern in patterns:
-            matches = re.findall(pattern, html, re.DOTALL)
-            if matches:
-                # Берём первый найденный блок с текстом
-                raw_text = matches[0]
-                # Убираем HTML теги
-                clean_text = re.sub(r'<[^>]+>', '', raw_text)
+            matches = re.findall(pattern, html, re.DOTALL | re.IGNORECASE)
+            for match in matches:
+                # Убираем все HTML теги
+                clean_text = re.sub(r'<[^>]+>', '', match)
+                # Убираем HTML entities
+                clean_text = unescape(clean_text)
                 # Убираем лишние пробелы и переносы
                 clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-                if len(clean_text) > 50:  # Проверяем, что это осмысленный текст
+                # Проверяем, что это осмысленный текст (больше 100 символов, не содержит служебных слов)
+                bad_words = ['window.', 'copyright', '©', 'mail.ru', 'vk.com', 'function', 'var ', 'const ']
+                if len(clean_text) > 100 and not any(word in clean_text.lower() for word in bad_words):
                     horoscope_text = clean_text
                     break
-        
-        if not horoscope_text:
-            logger.warning("Не удалось распарсить гороскоп, пробуем альтернативный метод")
-            # Пробуем найти любой длинный текст в параграфах
-            all_paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL)
-            for para in all_paragraphs:
-                clean = re.sub(r'<[^>]+>', '', para)
-                clean = re.sub(r'\s+', ' ', clean).strip()
-                if len(clean) > 100:
-                    horoscope_text = clean
-                    break
+            if horoscope_text:
+                break
         
         if horoscope_text:
+            # Ограничиваем длину до разумной (первые 500 символов)
+            if len(horoscope_text) > 500:
+                horoscope_text = horoscope_text[:500] + "..."
             logger.info(f"Гороскоп получен для {ZODIAC_SIGN}")
             return horoscope_text
         else:
@@ -294,7 +291,7 @@ def get_news() -> str:
             return "🗞 Новостей пока нет"
 
         logger.info(f"Получено {len(news)} новостей")
-        return "🗞 **Новости \\(РБК\\):**\n\n" + "\n\n".join(news)
+        return "🗞 *Новости (РБК):*\n\n" + "\n\n".join(news)
 
     except Exception as e:
         logger.error(f"Ошибка получения новостей: {e}")
@@ -340,7 +337,7 @@ def main():
     # Проверяем переменные окружения
     check_env()
     
-    today = datetime.now().strftime("%d\\.%m\\.%Y")
+    today = datetime.now().strftime("%d.%m.%Y")
     
     # Собираем части сообщения
     weather = get_weather()
@@ -348,12 +345,12 @@ def main():
     horoscope = get_horoscope()
     news = get_news()
     
-    # Формируем итоговое сообщение
+    # Формируем итоговое сообщение (обычный Markdown без лишнего экранирования)
     message = (
-        f"☀️ *Доброе утро\\!* \\({today}\\)\n\n"
-        f"{escape_markdown(weather)}\n\n"
-        f"💱 *Курсы:*\n{escape_markdown(rates)}\n\n"
-        f"♑ *Гороскоп для {escape_markdown(ZODIAC_SIGN)}:*\n{escape_markdown(horoscope)}\n\n"
+        f"☀️ *Доброе утро!* ({today})\n\n"
+        f"{weather}\n\n"
+        f"💱 *Курсы:*\n{rates}\n\n"
+        f"♑ *Гороскоп для {ZODIAC_SIGN}:*\n{horoscope}\n\n"
         f"{news}\n"
     )
 
