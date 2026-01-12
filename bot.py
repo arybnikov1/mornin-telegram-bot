@@ -4,8 +4,6 @@ import re
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
-print("### FINAL STABLE BOT.PY ###")
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 WEATHER_KEY = os.getenv("WEATHER_KEY")
@@ -145,7 +143,6 @@ def main():
         f"💱 Курсы:\n{get_rates()}\n\n"
         f"♑ Гороскоп для Козерога:\n{get_horoscope()}\n\n"
         f"{get_news()}\n\n"
-        f"— Утренний бот ☕"
     )
 
     send_message(message)
