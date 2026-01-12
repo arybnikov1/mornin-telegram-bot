@@ -1,57 +1,59 @@
-print("### NEW VERSION OF BOT.PY ###")
 import os
 import requests
 from datetime import datetime
+
+print("### FINAL VERSION OF BOT.PY ###")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 WEATHER_KEY = os.getenv("WEATHER_KEY")
 NEWS_KEY = os.getenv("NEWS_KEY")
 
+
 # ---------- Погода ----------
 def get_weather():
     try:
         if not WEATHER_KEY:
-            return "Погода: API-ключ не задан ☁️"
+            return "Погода недоступна ☁️"
 
-        url = "https://api.openweathermap.org/data/2.5/weather"
-        params = {
-            "q": "Moscow,ru",
-            "appid": WEATHER_KEY,
-            "units": "metric",
-            "lang": "ru"
-        }
+        r = requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={
+                "q": "Moscow,ru",
+                "appid": WEATHER_KEY,
+                "units": "metric",
+                "lang": "ru"
+            },
+            timeout=10
+        )
 
-        response = requests.get(url, params=params, timeout=10)
+        if r.status_code != 200:
+            return "Погода недоступна ☁️"
 
-        if response.status_code != 200:
-            return f"Погода недоступна ☁️ (код {response.status_code})"
+        data = r.json()
+        if "main" not in data:
+            return "Погода недоступна ☁️"
 
-        r = response.json()
-
-        if "main" not in r:
-            return "Погода временно недоступна ☁️"
-
-        temp = round(r["main"]["temp"])
-        feels = round(r["main"]["feels_like"])
-        desc = r["weather"][0]["description"].capitalize()
+        temp = round(data["main"]["temp"])
+        feels = round(data["main"]["feels_like"])
+        desc = data["weather"][0]["description"].capitalize()
 
         return f"{temp}°C, {desc}\nОщущается как {feels}°C"
+    except Exception:
+        return "Погода недоступна ☁️"
 
-    except Exception as e:
-        return "Погода временно недоступна ☁️"
 
-# ---------- Валюты ----------
+# ---------- Курсы ----------
 def get_rates():
     try:
-        # --- Курсы ЦБ РФ ---
-        url = "https://www.cbr-xml-daily.ru/daily_json.js"
-        r = requests.get(url, timeout=10).json()
+        cbr = requests.get(
+            "https://www.cbr-xml-daily.ru/daily_json.js",
+            timeout=10
+        ).json()
 
-        usd = round(r["Valute"]["USD"]["Value"], 2)
-        eur = round(r["Valute"]["EUR"]["Value"], 2)
+        usd = round(cbr["Valute"]["USD"]["Value"], 2)
+        eur = round(cbr["Valute"]["EUR"]["Value"], 2)
 
-        # --- Bitcoin (CoinGecko) ---
         btc_resp = requests.get(
             "https://api.coingecko.com/api/v3/simple/price",
             params={"ids": "bitcoin", "vs_currencies": "rub"},
@@ -65,59 +67,81 @@ def get_rates():
             f"EUR — {eur} ₽\n"
             f"BTC — {btc:,} ₽".replace(",", " ")
         )
-
     except Exception:
-        return "Курсы временно недоступны 💱"
+        return "Курсы недоступны 💱"
 
-# ---------- Гороскоп ----------
+
+# ---------- Гороскоп (стабильный вариант) ----------
 def get_horoscope():
-    r = requests.post(
-        "https://aztro.sameerkumar.website/?sign=aries&day=today",
-        timeout=10
-    ).json()
-    return r["description"]
+    try:
+        r = requests.get(
+            "https://ignio.com/rss/daily/com.xml",
+            timeout=10
+        )
+
+        if r.status_code != 200:
+            return "Сегодня полагайся на интуицию ✨"
+
+        text = r.text
+        start = text.find("<description>") + 13
+        end = text.find("</description>")
+
+        horoscope = text[start:end]
+        horoscope = horoscope.replace("<![CDATA[", "").replace("]]>", "").strip()
+
+        return horoscope[:400] + "…"
+    except Exception:
+        return "Сегодня хороший день для спокойных решений ✨"
+
 
 # ---------- Новости ----------
 def get_news():
-    url = "https://gnews.io/api/v4/top-headlines"
-    params = {
-        "lang": "ru",
-        "country": "ru",
-        "max": 3,
-        "token": NEWS_KEY
-    }
-    r = requests.get(url, params=params, timeout=10).json()
+    try:
+        r = requests.get(
+            "https://gnews.io/api/v4/top-headlines",
+            params={
+                "lang": "ru",
+                "country": "ru",
+                "max": 3,
+                "token": NEWS_KEY
+            },
+            timeout=10
+        ).json()
 
-    titles = [f"{i+1}. {a['title']}" for i, a in enumerate(r.get("articles", []))]
-    return "\n".join(titles) if titles else "Сегодня без громких новостей"
+        articles = r.get("articles", [])
+        if not articles:
+            return "Сегодня без громких новостей"
 
-# ---------- Отправка ----------
+        return "\n".join(
+            f"{i+1}. {a['title']}" for i, a in enumerate(articles)
+        )
+    except Exception:
+        return "Новости недоступны 🗞"
+
+
+# ---------- Telegram ----------
 def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": text
-    }
-    requests.post(url, json=payload, timeout=10)
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        json={"chat_id": CHAT_ID, "text": text},
+        timeout=10
+    )
 
-# ---------- Главная логика ----------
+
+# ---------- Main ----------
 def main():
-    weather = get_weather()
-    rates = get_rates()
-    horoscope = get_horoscope()
-    news = get_news()
-
     today = datetime.now().strftime("%d.%m.%Y")
 
     message = (
         f"☀️ Доброе утро! ({today})\n\n"
-        f"🌤 Москва:\n{weather}\n\n"
-        f"💱 Курсы:\n{rates}\n\n"
-        f"♈ Гороскоп:\n{horoscope}\n\n"
-        f"🗞 Новости:\n{news}"
+        f"🌤 Москва:\n{get_weather()}\n\n"
+        f"💱 Курсы:\n{get_rates()}\n\n"
+        f"♈ Гороскоп:\n{get_horoscope()}\n\n"
+        f"🗞 Новости:\n{get_news()}"
     )
 
     send_message(message)
+
 
 if __name__ == "__main__":
     main()
