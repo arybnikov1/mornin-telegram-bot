@@ -43,24 +43,31 @@ def get_weather():
 
 # ---------- Валюты ----------
 def get_rates():
-    fiat = requests.get(
-        "https://api.exchangerate.host/latest?base=USD&symbols=RUB,EUR",
-        timeout=10
-    ).json()
+    try:
+        # --- Курсы ЦБ РФ ---
+        url = "https://www.cbr-xml-daily.ru/daily_json.js"
+        r = requests.get(url, timeout=10).json()
 
-    usd = round(fiat["rates"]["RUB"], 2)
-    eur = round(usd / fiat["rates"]["EUR"], 2)
+        usd = round(r["Valute"]["USD"]["Value"], 2)
+        eur = round(r["Valute"]["EUR"]["Value"], 2)
 
-    btc = requests.get(
-        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=rub",
-        timeout=10
-    ).json()["bitcoin"]["rub"]
+        # --- Bitcoin (CoinGecko) ---
+        btc_resp = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "bitcoin", "vs_currencies": "rub"},
+            timeout=10
+        ).json()
 
-    return (
-        f"USD — {usd} ₽\n"
-        f"EUR — {eur} ₽\n"
-        f"BTC — {btc:,} ₽".replace(",", " ")
-    )
+        btc = btc_resp["bitcoin"]["rub"]
+
+        return (
+            f"USD — {usd} ₽\n"
+            f"EUR — {eur} ₽\n"
+            f"BTC — {btc:,} ₽".replace(",", " ")
+        )
+
+    except Exception:
+        return "Курсы временно недоступны 💱"
 
 # ---------- Гороскоп ----------
 def get_horoscope():
