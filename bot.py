@@ -245,8 +245,9 @@ def is_sport(title: str) -> bool:
     return any(w in t for w in sport_words)
 
 def escape_markdown(text: str) -> str:
-    """Экранирует специальные символы Markdown"""
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    """Экранирует специальные символы для Markdown (не MarkdownV2)"""
+    # Для обычного Markdown нужно экранировать только эти символы
+    special_chars = ['_', '*', '[', '`']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
     return text
@@ -287,7 +288,7 @@ def get_news() -> str:
 
             # Форматируем: жирный заголовок + ссылка на новой строке
             safe_title = escape_markdown(title)
-            news.append(f"**{safe_title}**\n{link}")
+            news.append(f"*{safe_title}*\n{link}")
 
         if not news:
             return "🗞 Новостей пока нет"
@@ -310,7 +311,7 @@ def send_message(text: str) -> bool:
             json={
                 "chat_id": CHAT_ID,
                 "text": text,
-                "parse_mode": "MarkdownV2",
+                "parse_mode": "Markdown",
                 "disable_web_page_preview": True
             },
             timeout=REQUEST_TIMEOUT
@@ -328,6 +329,8 @@ def send_message(text: str) -> bool:
             
     except Exception as e:
         logger.error(f"Ошибка отправки сообщения: {e}")
+        # Логируем текст сообщения для отладки
+        logger.error(f"Текст сообщения (первые 500 символов): {text[:500]}")
         return False
 
 # ---------- Main ----------
